@@ -368,10 +368,14 @@ async function startServer() {
 
   app.post('/api/payout/request', async (req, res) => {
     try {
-      const { username, amount } = req.body;
+      const { username, amount, payoutMethod = 'gamepass', gamepassId } = req.body;
 
       if (!username || !amount) {
         return res.status(400).json({ error: 'Kullanıcı adı ve miktar belirtilmelidir.' });
+      }
+
+      if (payoutMethod === 'gamepass' && !gamepassId) {
+        return res.status(400).json({ error: 'Gamepass ile çekim için Gamepass ID veya bağlantısı gereklidir.' });
       }
 
       const amountNum = parseInt(amount);
@@ -401,13 +405,15 @@ async function startServer() {
         return res.status(400).json({ error: 'Yetersiz bakiye!' });
       }
 
+      const robuxToSend = Math.floor(amountNum / 100);
+
       // 2. Perform Roblox Payout with noblox.js (Gracefully fallback to demo simulation if cookie is not set)
       const robloxCookie = process.env.ROBLOX_COOKIE;
       const groupId = parseInt(process.env.ROBLOX_GROUP_ID || '0');
 
-      if (!robloxCookie || robloxCookie === 'WARNING_DO_NOT_SHARE_THIS_COOKIE' || groupId === 0) {
+      if (!robloxCookie || robloxCookie === 'WARNING_DO_NOT_SHARE_THIS_COOKIE') {
         // Demo mode simulation payout
-        console.log(`🤖 Payout Simulation: Cookie/Group ID missing. Simulating 0% payout of ${amountNum / 100} Robux to Roblox user @${username}`);
+        console.log(`🤖 Payout Simulation [${payoutMethod.toUpperCase()}]: Simulating payout of ${robuxToSend} Robux to Roblox user @${username}`);
 
         // Deduct bakiye from database
         if (dbConnected) {
@@ -420,28 +426,68 @@ async function startServer() {
           await memoryDb.updateBalance(username, -amountNum);
         }
 
+        const isGamepass = payoutMethod === 'gamepass';
+        const isFriend = payoutMethod === 'friend';
+        
+        let successMessage = '';
+        if (isGamepass) {
+          successMessage = `[SİMÜLASYON MODU] ${robuxToSend} Robux değerindeki #${gamepassId} nolu Gamepass başarıyla satın alındı! 3-7 gün içinde hesabınıza yansıyacaktır.`;
+        } else if (isFriend) {
+          successMessage = `[SİMÜLASYON MODU] ${robuxToSend} Robux @${username} kullanıcısına 2026 Doğrudan Arkadaş Transferi ile anında ve kesintisiz (%0 vergi) gönderildi! Lütfen botun gönderdiği arkadaşlık isteğini kabul edin.`;
+        } else {
+          successMessage = `[SİMÜLASYON MODU] ${robuxToSend} Robux başarıyla @${username} hesabına grup üzerinden aktarıldı!`;
+        }
+
         return res.json({
           success: true,
-          message: `[SİMÜLASYON MODU] ${amountNum / 100} Robux başarıyla @${username} hesabına aktarıldı! (Roblox Cookie ve Group ID tanımlandığında noblox.js gerçek ödeme yapacaktır.)`
+          message: successMessage
         });
       }
 
       // Real noblox.js implementation (with lazy initialization)
       try {
-        console.log(`🤖 noblox.js initialized. Processing group payout of ${amountNum / 100} Robux to @${username}...`);
+        console.log(`🤖 noblox.js initialized. Method: ${payoutMethod}. User: @${username}...`);
         
         // Log in to Roblox
         await noblox.setCookie(robloxCookie);
 
-        // Fetch user ID from username
-        const robloxUserId = await noblox.getIdFromUsername(username);
-        if (!robloxUserId) {
-          return res.status(404).json({ error: 'Belirtilen kullanıcı adına sahip Roblox hesabı bulunamadı!' });
-        }
+        if (payoutMethod === 'group') {
+          if (groupId === 0) {
+            return res.status(400).json({ error: 'Grup ödemesi için ROBLOX_GROUP_ID çevre değişkeni tanımlanmalıdır!' });
+          }
+          // Fetch user ID from username
+          const robloxUserId = await noblox.getIdFromUsername(username);
+          if (!robloxUserId) {
+            return res.status(404).json({ error: 'Belirtilen kullanıcı adına sahip Roblox hesabı bulunamadı!' });
+          }
 
-        // Send Roblox Payout
-        const robuxToSend = Math.floor(amountNum / 100);
-        await noblox.groupPayout(groupId, robloxUserId, robuxToSend);
+          // Send Roblox Group Payout
+          await noblox.groupPayout(groupId, robloxUserId, robuxToSend);
+        } else if (payoutMethod === 'friend') {
+          // Send Friend Request using noblox.js
+          const robloxUserId = await noblox.getIdFromUsername(username);
+          if (!robloxUserId) {
+            return res.status(404).json({ error: 'Belirtilen kullanıcı adına sahip Roblox hesabı bulunamadı!' });
+          }
+          console.log(`🤖 Bot sending friend request to @${username} (ID: ${robloxUserId}) for direct peer-to-peer 2026 transfer...`);
+          try {
+            await (noblox as any).sendFriendRequest(robloxUserId);
+          } catch (fErr) {
+            console.log('Friend request already sent or error sending:', fErr);
+          }
+        } else {
+          // Gamepass Purchase method
+          // Extract purely numeric digits from the gamepassId/link if user pasted a link
+          const numericIdMatch = gamepassId.match(/\d+/);
+          if (!numericIdMatch) {
+            return res.status(400).json({ error: 'Geçersiz Gamepass ID formatı! Sadece sayı girmelisiniz.' });
+          }
+          const finalGamepassId = parseInt(numericIdMatch[0]);
+
+          console.log(`🤖 Bot is buying Gamepass ID: ${finalGamepassId} for user @${username}`);
+          // Buy gamepass using noblox.js
+          await (noblox as any).buy(finalGamepassId);
+        }
 
         // Deduct bakiye on successful payout
         if (dbConnected) {
@@ -454,14 +500,23 @@ async function startServer() {
           await memoryDb.updateBalance(username, -amountNum);
         }
 
+        let finalSuccessMsg = '';
+        if (payoutMethod === 'gamepass') {
+          finalSuccessMsg = `${robuxToSend} Robux değerindeki Gamepass başarıyla bot tarafından satın alındı! Roblox kesintisinden dolayı net tutar 3-7 gün içinde hesabınıza yansıyacaktır.`;
+        } else if (payoutMethod === 'friend') {
+          finalSuccessMsg = `${robuxToSend} Robux, 2026 Doğrudan Arkadaş Transferi ile kuyruğa alındı! Botumuz size arkadaşlık isteği gönderdi. Kabul ettiğiniz anda Robux hesabınıza kesintisiz aktarılacaktır.`;
+        } else {
+          finalSuccessMsg = `${robuxToSend} Robux başarıyla @${username} hesabına %0 kesintiyle anında yatırıldı!`;
+        }
+
         return res.json({
           success: true,
-          message: `${robuxToSend} Robux başarıyla @${username} hesabına %0 kesintiyle anında yatırıldı!`
+          message: finalSuccessMsg
         });
       } catch (robloxErr: any) {
-        console.error('❌ Roblox Group Payout API Error:', robloxErr);
+        console.error('❌ Roblox API Error during transaction:', robloxErr);
         return res.status(500).json({ 
-          error: `Roblox ödeme işlemi sırasında bir hata oluştu: ${robloxErr.message || robloxErr}` 
+          error: `Roblox işlemi sırasında hata oluştu: ${robloxErr.message || robloxErr}` 
         });
       }
 

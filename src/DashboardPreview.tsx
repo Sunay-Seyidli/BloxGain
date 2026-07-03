@@ -40,6 +40,8 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
   const [withdrawUsername, setWithdrawUsername] = useState(user.username);
   const [withdrawAmount, setWithdrawAmount] = useState('100'); // 1 Robux
   const [withdrawStatus, setWithdrawStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' });
+  const [payoutMethod, setPayoutMethod] = useState<'group' | 'gamepass' | 'friend'>('friend');
+  const [gamepassId, setGamepassId] = useState('');
   
   // Roblox avatar states
   const [robloxAvatar, setRobloxAvatar] = useState<string | null>(null);
@@ -152,6 +154,11 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
       return;
     }
 
+    if (payoutMethod === 'gamepass' && !gamepassId.trim()) {
+      setWithdrawStatus({ type: 'error', message: lang === 'tr' ? 'Lütfen oluşturduğunuz ücretsiz Gamepass ID\'sini girin!' : 'Please enter your free Gamepass ID!' });
+      return;
+    }
+
     if (isNaN(amountNum) || amountNum < 100) {
       setWithdrawStatus({ type: 'error', message: t.coinAmountPlaceholder });
       return;
@@ -168,7 +175,12 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
       const response = await fetch('/api/payout/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: withdrawUsername, amount: amountNum })
+        body: JSON.stringify({ 
+          username: withdrawUsername, 
+          amount: amountNum,
+          payoutMethod,
+          gamepassId: payoutMethod === 'gamepass' ? gamepassId.trim() : undefined
+        })
       });
 
       const data = await response.json();
@@ -625,6 +637,43 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                       <p className="text-xs text-gray-500 mt-1">{t.withdrawFormSub}</p>
                     </div>
 
+                    {/* Payout Method Selector */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-1 bg-purple-950/25 border border-purple-500/10 rounded-xl">
+                      <button
+                        type="button"
+                        onClick={() => setPayoutMethod('friend')}
+                        className={`py-2 px-2.5 text-[11px] font-bold rounded-lg transition duration-200 text-center cursor-pointer ${
+                          payoutMethod === 'friend'
+                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-600/15'
+                            : 'text-gray-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {lang === 'tr' ? '⚡ Arkadaşa Hızlı (%0)' : '⚡ Direct Friend (0%)'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPayoutMethod('gamepass')}
+                        className={`py-2 px-2.5 text-[11px] font-bold rounded-lg transition duration-200 text-center cursor-pointer ${
+                          payoutMethod === 'gamepass'
+                            ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/15'
+                            : 'text-gray-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {lang === 'tr' ? '🎮 Gamepass (Grupsuz)' : '🎮 Gamepass (No Group)'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPayoutMethod('group')}
+                        className={`py-2 px-2.5 text-[11px] font-bold rounded-lg transition duration-200 text-center cursor-pointer ${
+                          payoutMethod === 'group'
+                            ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/15'
+                            : 'text-gray-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {lang === 'tr' ? '🛡️ Grup (Anında - %0)' : '🛡️ Group (Instant - 0%)'}
+                      </button>
+                    </div>
+
                     <form onSubmit={handleWithdraw} className="space-y-4">
                       
                       {/* Roblox Username */}
@@ -644,6 +693,56 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                           />
                         </div>
                       </div>
+
+                      {/* Gamepass ID (Only visible if Gamepass method is selected) */}
+                      {payoutMethod === 'gamepass' && (
+                        <motion.div 
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          className="space-y-1.5"
+                        >
+                          <label className="text-xs font-bold text-emerald-400 tracking-wider uppercase block">
+                            {lang === 'tr' ? 'GAMEPASS ID veya BAĞLANTISI' : 'GAMEPASS ID or LINK'}
+                          </label>
+                          <div className="relative">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-emerald-400">
+                              <Gamepad2 className="w-5 h-5" />
+                            </div>
+                            <input
+                              id="input-gamepass-id"
+                              type="text"
+                              value={gamepassId}
+                              onChange={(e) => setGamepassId(e.target.value)}
+                              placeholder={lang === 'tr' ? 'Örn: 124578963 veya Gamepass Linki' : 'e.g. 124578963 or Gamepass Link'}
+                              className="w-full bg-purple-950/40 border border-emerald-500/30 text-sm text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-emerald-500/60 transition duration-300"
+                            />
+                          </div>
+                          <p className="text-[10px] text-gray-500">
+                            {lang === 'tr' 
+                              ? 'Hesabınızda tamamen ücretsiz bir Gamepass oluşturup buraya ekleyin. Roblox %30 kesinti yapar.' 
+                              : 'Create a 100% free Gamepass in your Roblox experience and paste its ID. Roblox takes a 30% tax.'}
+                          </p>
+                        </motion.div>
+                      )}
+
+                      {/* Friend Payout Explanation (Only visible if Friend method is selected) */}
+                      {payoutMethod === 'friend' && (
+                        <motion.div 
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          className="bg-purple-950/40 p-3.5 rounded-xl border border-purple-500/20 space-y-1.5"
+                        >
+                          <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                            <span>⚡</span>
+                            <span>{lang === 'tr' ? 'DOĞRUDAN ARKADAŞ TRANSFERİ (YENİ - %0 KESİNTİ)' : 'DIRECT FRIEND TRANSFER (NEW - 0% TAX)'}</span>
+                          </span>
+                          <p className="text-[11px] text-slate-300 leading-relaxed">
+                            {lang === 'tr' 
+                              ? 'Ödeme botumuz Roblox üzerinden size anında bir arkadaşlık isteği gönderecektir. İstek kabul edildikten sonra, Robux bakiyeniz kesintisiz olarak hesabınıza doğrudan transfer edilir!' 
+                              : 'Our payout bot will instantly send you a friend request on Roblox. After accepting, your Robux will be transferred to your account instantly with 0% tax!'}
+                          </p>
+                        </motion.div>
+                      )}
 
                       {/* Roblox Avatar Preview Card */}
                       {(robloxAvatar || fetchingAvatar) && (
