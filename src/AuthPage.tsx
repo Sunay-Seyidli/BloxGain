@@ -163,8 +163,8 @@ export default function AuthPage({ onSuccess }: AuthPageProps) {
     },
     {
       icon: <Gamepad2 className="w-5 h-5 text-cyan-400" />,
-      title: '0 Kesintiyle Grup Ödemesi',
-      desc: 'Roblox grubumuz üzerinden anında ve güvenli payout transferi.',
+      title: 'Güvenli Gamepass Ödemesi',
+      desc: 'Kendi oluşturduğunuz gamepass üzerinden vergi karşılamalı olarak güvenle çekim yapın.',
     },
   ];
 
@@ -508,29 +508,7 @@ export default function AuthPage({ onSuccess }: AuthPageProps) {
               </p>
             )}
 
-            {/* Admin Bypass Demo Button */}
-            <div className="mt-6 pt-5 border-t border-purple-500/10 text-center">
-              <button
-                id="btn-demo-bypass"
-                type="button"
-                onClick={() => {
-                  const demoUser = {
-                    username: 'RobloxGamer_99',
-                    email: 'gamer99@gmail.com',
-                    balance: 450,
-                  };
-                  localStorage.setItem('active_user', JSON.stringify(demoUser));
-                  showToast('Demo Kullanıcıyla Başarıyla Giriş Yapıldı!', 'success');
-                  setTimeout(() => {
-                    onSuccess(demoUser);
-                  }, 1200);
-                }}
-                className="text-xs text-gray-500 hover:text-emerald-400 font-medium transition duration-300 flex items-center justify-center gap-1 mx-auto"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                Hesapsız Hızlı Giriş Yap (Demo Modu)
-              </button>
-            </div>
+
 
           </motion.div>
         </div>

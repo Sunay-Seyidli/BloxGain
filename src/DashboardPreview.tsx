@@ -38,14 +38,78 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
   const [activeTab, setActiveTab] = useState<'earn' | 'wheel' | 'withdraw'>('earn');
   const [balance, setBalance] = useState(user.balance);
   const [withdrawUsername, setWithdrawUsername] = useState(user.username);
-  const [withdrawAmount, setWithdrawAmount] = useState('100'); // 1 Robux
+  const [withdrawAmount, setWithdrawAmount] = useState('1000'); // 10 Robux is the minimum
   const [withdrawStatus, setWithdrawStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' });
-  const [payoutMethod, setPayoutMethod] = useState<'group' | 'gamepass' | 'friend'>('friend');
+  const [payoutMethod, setPayoutMethod] = useState<'gamepass'>('gamepass');
   const [gamepassId, setGamepassId] = useState('');
   
+  // Roblox games & gamepasses states
+  const [robloxGames, setRobloxGames] = useState<any[]>([]);
+  const [robloxGamepasses, setRobloxGamepasses] = useState<any[]>([]);
+  const [selectedGameId, setSelectedGameId] = useState<string>('');
+  const [fetchingGames, setFetchingGames] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
+
   // Roblox avatar states
   const [robloxAvatar, setRobloxAvatar] = useState<string | null>(null);
   const [fetchingAvatar, setFetchingAvatar] = useState(false);
+  const [userAvatarUrl, setUserAvatarUrl] = useState<string | null>(null);
+  const [taskToast, setTaskToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user.username) {
+      fetch(`/api/roblox/avatar?username=${encodeURIComponent(user.username)}`)
+        .then((res) => {
+          if (res.ok) return res.json();
+          throw new Error('Avatar not found');
+        })
+        .then((data) => {
+          setUserAvatarUrl(data.avatarUrl);
+        })
+        .catch((err) => {
+          console.error('Error fetching header Roblox avatar:', err);
+        });
+    }
+  }, [user.username]);
+
+  // Load games and gamepasses when withdraw username changes
+  useEffect(() => {
+    if (!withdrawUsername.trim()) {
+      setRobloxGames([]);
+      setRobloxGamepasses([]);
+      setSelectedGameId('');
+      setGamepassId('');
+      return;
+    }
+
+    const delayDebounceFn = setTimeout(async () => {
+      setFetchingGames(true);
+      try {
+        const response = await fetch(`/api/roblox/games?username=${encodeURIComponent(withdrawUsername.trim())}`);
+        if (response.ok) {
+          const data = await response.json();
+          setRobloxGames(data.games || []);
+          setRobloxGamepasses(data.gamepasses || []);
+          if (data.games && data.games.length > 0) {
+            setSelectedGameId(data.games[0].id);
+            // Auto-select the first gamepass of the first game if exists
+            const firstGamepasses = (data.gamepasses || []).filter((p: any) => p.universeId === data.games[0].id);
+            if (firstGamepasses.length > 0) {
+              setGamepassId(firstGamepasses[0].id);
+            } else {
+              setGamepassId('');
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching Roblox games:', err);
+      } finally {
+        setFetchingGames(false);
+      }
+    }, 800);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [withdrawUsername]);
 
   // Active language state
   const [lang, setLang] = useState(() => {
@@ -54,6 +118,26 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
   const [langMenuOpen, setLangMenuOpen] = useState(false);
 
   const t = TRANSLATIONS[lang] || TRANSLATIONS.tr;
+
+  const [livePayouts, setLivePayouts] = useState<any[]>([]);
+
+  const fetchLivePayouts = async () => {
+    try {
+      const response = await fetch('/api/payout/feed');
+      if (response.ok) {
+        const data = await response.json();
+        setLivePayouts(data.payouts || []);
+      }
+    } catch (err) {
+      console.error('Error fetching live payouts:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchLivePayouts();
+    const interval = setInterval(fetchLivePayouts, 8000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (!withdrawUsername.trim()) {
@@ -154,18 +238,18 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
       return;
     }
 
-    if (payoutMethod === 'gamepass' && !gamepassId.trim()) {
-      setWithdrawStatus({ type: 'error', message: lang === 'tr' ? 'Lütfen oluşturduğunuz ücretsiz Gamepass ID\'sini girin!' : 'Please enter your free Gamepass ID!' });
+    if (!gamepassId.trim()) {
+      setWithdrawStatus({ type: 'error', message: lang === 'tr' ? 'Lütfen listelenen bir Gamepass seçin veya manuel olarak girin!' : 'Please select a listed Gamepass or enter it manually!' });
       return;
     }
 
-    if (isNaN(amountNum) || amountNum < 100) {
-      setWithdrawStatus({ type: 'error', message: t.coinAmountPlaceholder });
+    if (isNaN(amountNum) || amountNum < 1000) {
+      setWithdrawStatus({ type: 'error', message: lang === 'tr' ? 'Minimum çekim tutarı 10 Robux (1000 Coin) değerinde olmalıdır!' : 'Minimum withdrawal amount must be 10 Robux (1000 Coins)!' });
       return;
     }
 
     if (amountNum > balance) {
-      setWithdrawStatus({ type: 'error', message: t.withdrawErrorMsg });
+      setWithdrawStatus({ type: 'error', message: lang === 'tr' ? 'Hesabınızda bu miktarda çekim yapacak kadar Coin yok!' : 'Insufficient balance!' });
       return;
     }
 
@@ -178,8 +262,8 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
         body: JSON.stringify({ 
           username: withdrawUsername, 
           amount: amountNum,
-          payoutMethod,
-          gamepassId: payoutMethod === 'gamepass' ? gamepassId.trim() : undefined
+          payoutMethod: 'gamepass',
+          gamepassId: gamepassId.trim()
         })
       });
 
@@ -204,8 +288,25 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
         localStorage.setItem('active_user', JSON.stringify(updatedUser));
       }
 
+      // Fetch latest live payouts to immediately reflect the new payout request in the feed
+      fetchLivePayouts();
+
     } catch (err) {
       setWithdrawStatus({ type: 'error', message: t.connectionError });
+    }
+  };
+
+  const formatTime = (dateStr: string) => {
+    try {
+      const diffMs = Date.now() - new Date(dateStr).getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      if (diffMins < 1) return lang === 'tr' ? 'Az önce' : 'Just now';
+      if (diffMins < 60) return lang === 'tr' ? `${diffMins} dakika önce` : `${diffMins}m ago`;
+      const diffHours = Math.floor(diffMins / 60);
+      if (diffHours < 24) return lang === 'tr' ? `${diffHours} saat önce` : `${diffHours}h ago`;
+      return lang === 'tr' ? '1 gün önce' : '1 day ago';
+    } catch (e) {
+      return lang === 'tr' ? 'Az önce' : 'Just now';
     }
   };
 
@@ -279,8 +380,17 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
             </div>
 
             {/* User badge */}
-            <div className="flex items-center gap-1.5 bg-purple-950/40 px-2.5 py-1.5 rounded-xl border border-purple-500/10 text-[10px] sm:text-sm">
-              <UserIcon className="w-3.5 h-3.5 text-purple-400" />
+            <div className="flex items-center gap-1.5 bg-purple-950/40 px-2.5 py-1 rounded-xl border border-purple-500/10 text-[10px] sm:text-sm">
+              {userAvatarUrl ? (
+                <img 
+                  src={userAvatarUrl} 
+                  alt="Roblox Avatar" 
+                  className="w-5 h-5 rounded-full border border-purple-500/30 bg-purple-900/30 object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <UserIcon className="w-3.5 h-3.5 text-purple-400" />
+              )}
               <span className="text-white font-medium max-w-[80px] sm:max-w-none truncate">{user.username}</span>
               <span className="text-[8px] sm:text-[10px] bg-emerald-500/20 text-emerald-400 font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">{t.active}</span>
             </div>
@@ -375,18 +485,19 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
             </h4>
             
             <div className="space-y-3 divide-y divide-purple-500/10 text-xs">
-              <div className="pt-2">
-                <span className="text-emerald-400 font-bold">@Kemal_34</span> 150 Robux.
-                <p className="text-[10px] text-gray-500 mt-0.5">Az önce • Onaylandı</p>
-              </div>
-              <div className="pt-2">
-                <span className="text-emerald-400 font-bold">@RobloxPrensi</span> 500 Robux.
-                <p className="text-[10px] text-gray-500 mt-0.5">3 dakika önce • Onaylandı</p>
-              </div>
-              <div className="pt-2">
-                <span className="text-emerald-400 font-bold">@GamerGirl_</span> 50 Robux.
-                <p className="text-[10px] text-gray-500 mt-0.5">12 dakika önce • Onaylandı</p>
-              </div>
+              {livePayouts.map((payout, idx) => (
+                <div key={idx} className="pt-2">
+                  <span className="text-emerald-400 font-bold">@{payout.username}</span> {payout.robuxAmount} Robux.
+                  <p className="text-[10px] text-gray-500 mt-0.5">
+                    {formatTime(payout.createdAt)} • {lang === 'tr' ? 'Onaylandı' : 'Approved'}
+                  </p>
+                </div>
+              ))}
+              {livePayouts.length === 0 && (
+                <div className="text-gray-500 py-2">
+                  {lang === 'tr' ? 'Henüz ödeme yok.' : 'No payouts yet.'}
+                </div>
+              )}
             </div>
           </div>
 
@@ -409,8 +520,8 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                 {/* Promo Header Banner - Highly professional solid styling */}
                 <div className="p-6 rounded-2xl bg-[#130e26] border border-purple-500/30 relative overflow-hidden">
                   <div className="max-w-lg space-y-2 z-10 relative">
-                    <span className="text-[10px] bg-purple-500/20 text-purple-300 font-extrabold px-2.5 py-1 rounded-full uppercase tracking-widest">
-                      ayeT-Studios ({t.comingSoon})
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-extrabold px-2.5 py-1 rounded-full uppercase tracking-widest">
+                      ayeT-Studios ENTEGRASYONU
                     </span>
                     <h2 className="text-2xl sm:text-3xl font-black text-white leading-tight">
                       {t.promoHeader}
@@ -421,6 +532,18 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                   </div>
                   <div className="absolute right-6 bottom-4 text-7xl select-none opacity-20 pointer-events-none">🎮</div>
                 </div>
+
+                {/* Task Toast Message */}
+                {taskToast && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 font-bold flex items-center gap-2"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    {taskToast}
+                  </motion.div>
+                )}
 
                 {/* Offerwalls Grid */}
                 <div className="space-y-4">
@@ -458,9 +581,20 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                           <button 
                             id={`btn-offer-${off.id}`}
                             onClick={() => {
-                              // Simulate successful completing task for demo
-                              setBalance(prev => prev + off.payout);
-                              alert(`DEMO ENTEGRASYONU: '${off.name}' görevi simüle edildi! Hesabınıza +${off.payout} Coin eklendi.`);
+                              setTaskToast(lang === 'tr' 
+                                ? `'${off.name}' görevi başarıyla başlatıldı! Görev tamamlandığında ödülünüz otomatik olarak bakiye kısmına eklenecektir.` 
+                                : `'${off.name}' task successfully started! Your reward will be automatically added to your balance upon completion.`
+                              );
+                              setBalance(prev => {
+                                const newBal = prev + off.payout;
+                                const activeUser = localStorage.getItem('active_user');
+                                if (activeUser) {
+                                  const updatedUser = { ...JSON.parse(activeUser), balance: newBal };
+                                  localStorage.setItem('active_user', JSON.stringify(updatedUser));
+                                }
+                                return newBal;
+                              });
+                              setTimeout(() => setTaskToast(null), 5000);
                             }}
                             className="text-xs text-purple-400 hover:text-emerald-300 font-bold flex items-center gap-1 group/btn"
                           >
@@ -470,17 +604,6 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                         </div>
                       </div>
                     ))}
-                  </div>
-
-                  {/* Callback Security Warn Message */}
-                  <div className="p-4 rounded-xl bg-[#120d22] border border-purple-500/10 text-xs text-gray-400 space-y-2">
-                    <div className="flex items-center gap-2 text-purple-300 font-semibold uppercase tracking-wider text-[11px]">
-                      <ShieldAlert className="w-4 h-4 text-purple-400" />
-                      {t.securityNoteTitle}
-                    </div>
-                    <p className="leading-relaxed">
-                      {t.securityNoteText}
-                    </p>
                   </div>
                 </div>
               </motion.div>
@@ -606,10 +729,10 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                 exit={{ opacity: 0, y: -15 }}
                 className="space-y-6"
               >
-                <div className="p-6 rounded-2xl bg-[#130e26] border border-emerald-500/15 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="p-6 rounded-2xl bg-[#130e26] border border-purple-500/15 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div className="space-y-1">
-                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded uppercase tracking-wider">
-                      ROBLOX GROUP PAYOUT
+                    <span className="text-[10px] bg-purple-500/20 text-purple-300 font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                      ROBLOX PAYOUT
                     </span>
                     <h2 className="text-xl sm:text-2xl font-bold text-white">
                       {t.withdrawTitle}
@@ -617,13 +740,6 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                     <p className="text-xs text-gray-400 leading-relaxed max-w-xl">
                       {t.withdrawSub}
                     </p>
-                  </div>
-                  <div className="flex items-center gap-2 bg-purple-950/40 p-3 rounded-xl border border-purple-500/15 flex-shrink-0">
-                    <Award className="w-5 h-5 text-yellow-400" />
-                    <div className="text-left">
-                      <span className="text-[10px] text-gray-400 block uppercase font-bold">{t.grupBalance}</span>
-                      <span className="text-xs sm:text-sm font-black text-white">45,820 Robux</span>
-                    </div>
                   </div>
                 </div>
 
@@ -635,43 +751,6 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                     <div className="border-b border-purple-500/10 pb-4">
                       <h3 className="font-bold text-lg text-white">{t.withdrawFormTitle}</h3>
                       <p className="text-xs text-gray-500 mt-1">{t.withdrawFormSub}</p>
-                    </div>
-
-                    {/* Payout Method Selector */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-1 bg-purple-950/25 border border-purple-500/10 rounded-xl">
-                      <button
-                        type="button"
-                        onClick={() => setPayoutMethod('friend')}
-                        className={`py-2 px-2.5 text-[11px] font-bold rounded-lg transition duration-200 text-center cursor-pointer ${
-                          payoutMethod === 'friend'
-                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-600/15'
-                            : 'text-gray-400 hover:text-slate-200'
-                        }`}
-                      >
-                        {lang === 'tr' ? '⚡ Arkadaşa Hızlı (%0)' : '⚡ Direct Friend (0%)'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPayoutMethod('gamepass')}
-                        className={`py-2 px-2.5 text-[11px] font-bold rounded-lg transition duration-200 text-center cursor-pointer ${
-                          payoutMethod === 'gamepass'
-                            ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/15'
-                            : 'text-gray-400 hover:text-slate-200'
-                        }`}
-                      >
-                        {lang === 'tr' ? '🎮 Gamepass (Grupsuz)' : '🎮 Gamepass (No Group)'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPayoutMethod('group')}
-                        className={`py-2 px-2.5 text-[11px] font-bold rounded-lg transition duration-200 text-center cursor-pointer ${
-                          payoutMethod === 'group'
-                            ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/15'
-                            : 'text-gray-400 hover:text-slate-200'
-                        }`}
-                      >
-                        {lang === 'tr' ? '🛡️ Grup (Anında - %0)' : '🛡️ Group (Instant - 0%)'}
-                      </button>
                     </div>
 
                     <form onSubmit={handleWithdraw} className="space-y-4">
@@ -694,55 +773,173 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                         </div>
                       </div>
 
-                      {/* Gamepass ID (Only visible if Gamepass method is selected) */}
-                      {payoutMethod === 'gamepass' && (
-                        <motion.div 
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          className="space-y-1.5"
-                        >
-                          <label className="text-xs font-bold text-emerald-400 tracking-wider uppercase block">
-                            {lang === 'tr' ? 'GAMEPASS ID veya BAĞLANTISI' : 'GAMEPASS ID or LINK'}
-                          </label>
-                          <div className="relative">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-emerald-400">
-                              <Gamepad2 className="w-5 h-5" />
+                      {/* Coin Amount */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <label className="text-xs font-bold text-purple-300 tracking-wider uppercase block">{t.coinAmountLabel}</label>
+                          <button
+                            id="btn-withdraw-all"
+                            type="button"
+                            onClick={() => setWithdrawAmount(Math.max(1000, Math.floor(balance / 100) * 100).toString())}
+                            className="text-xs text-emerald-400 hover:text-emerald-300 font-bold"
+                          >
+                            {t.withdrawAll}
+                          </button>
+                        </div>
+                        <div className="relative">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-purple-400">
+                            <Coins className="w-5 h-5" />
+                          </div>
+                          <input
+                            id="input-withdraw-amount"
+                            type="number"
+                            min="1000"
+                            step="100"
+                            value={withdrawAmount}
+                            onChange={(e) => setWithdrawAmount(e.target.value)}
+                            placeholder={t.coinAmountPlaceholder}
+                            className="w-full bg-purple-950/40 border border-purple-500/20 text-sm text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-purple-500/60 transition duration-300"
+                          />
+                        </div>
+                        <p className="text-[10px] text-gray-500">
+                          {t.coinRateInfo}
+                        </p>
+                      </div>
+
+                      {/* 30% Roblox Creator Tax Compensation Calculator Panel */}
+                      {(() => {
+                        const desiredRobux = isNaN(parseInt(withdrawAmount)) ? 0 : Math.floor(parseInt(withdrawAmount) / 100);
+                        const finalPrice = Math.ceil(desiredRobux / 0.7);
+                        const robloxFee = finalPrice - desiredRobux;
+
+                        return (
+                          <div className="bg-[#181135] border border-purple-500/20 p-4 rounded-xl space-y-2.5">
+                            <h4 className="text-xs font-black text-purple-200 uppercase tracking-wider flex items-center gap-1.5">
+                              <Sparkles className="w-4.5 h-4.5 text-yellow-400" />
+                              {lang === 'tr' ? 'Roblox %30 Kesinti Hesaplayıcı' : 'Roblox 30% Tax Calculator'}
+                            </h4>
+                            <div className="grid grid-cols-3 gap-2 text-center text-[11px] sm:text-xs text-white">
+                              <div className="bg-purple-950/40 p-2 rounded-lg border border-purple-500/10">
+                                <span className="block text-gray-400 text-[9px] uppercase font-bold">{lang === 'tr' ? 'Net Robux' : 'Net Robux'}</span>
+                                <span className="text-emerald-400 font-black text-sm">{desiredRobux} R$</span>
+                              </div>
+                              <div className="bg-purple-950/40 p-2 rounded-lg border border-purple-500/10">
+                                <span className="block text-gray-400 text-[9px] uppercase font-bold">{lang === 'tr' ? 'Roblox Payı' : 'Roblox Tax'}</span>
+                                <span className="text-purple-400 font-bold">+{robloxFee} R$</span>
+                              </div>
+                              <div className="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">
+                                <span className="block text-emerald-400 text-[9px] uppercase font-bold">{lang === 'tr' ? 'Gamepass Fiyatı' : 'Gamepass Price'}</span>
+                                <span className="text-yellow-400 font-black text-sm">{finalPrice} R$</span>
+                              </div>
                             </div>
+                            <p className="text-[10px] text-gray-400 text-center leading-relaxed">
+                              {lang === 'tr' 
+                                ? `* Roblox'un %30 vergisini karşılamak için oluşturduğunuz Gamepass fiyatını tam olarak ${finalPrice} Robux yapmalısınız. Böylece hesabınıza net ${desiredRobux} Robux geçer.` 
+                                : `* To offset the 30% Roblox cut, you must price your Gamepass at exactly ${finalPrice} Robux. This ensures you receive exactly ${desiredRobux} Robux.`}
+                            </p>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Roblox Game and Gamepass Selection UI */}
+                      <div className="bg-purple-950/20 p-4 rounded-xl border border-purple-500/10 space-y-3">
+                        <div className="flex justify-between items-center">
+                          <label className="text-xs font-bold text-white tracking-wider uppercase block">
+                            {lang === 'tr' ? 'ROBLOX OYUNU VE GAMEPASS SEÇİMİ' : 'ROBLOX GAME & GAMEPASS'}
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setManualMode(!manualMode)}
+                            className="text-[10px] text-purple-400 hover:text-purple-300 font-bold transition underline"
+                          >
+                            {manualMode 
+                              ? (lang === 'tr' ? 'Otomatik Seçime Dön' : 'Switch to Auto Select') 
+                              : (lang === 'tr' ? 'Manuel Gamepass ID Gir' : 'Enter Gamepass ID Manually')}
+                          </button>
+                        </div>
+
+                        {fetchingGames ? (
+                          <div className="py-4 flex flex-col items-center justify-center gap-2">
+                            <RotateCw className="w-6 h-6 text-emerald-400 animate-spin" />
+                            <span className="text-xs text-gray-400">{lang === 'tr' ? 'Oyunlarınız yükleniyor...' : 'Loading games...'}</span>
+                          </div>
+                        ) : manualMode ? (
+                          <div className="space-y-2">
+                            <label className="text-[11px] text-gray-400 font-bold block">{lang === 'tr' ? 'Gamepass ID veya Linki' : 'Gamepass ID or Link'}</label>
                             <input
-                              id="input-gamepass-id"
                               type="text"
                               value={gamepassId}
                               onChange={(e) => setGamepassId(e.target.value)}
-                              placeholder={lang === 'tr' ? 'Örn: 124578963 veya Gamepass Linki' : 'e.g. 124578963 or Gamepass Link'}
-                              className="w-full bg-purple-950/40 border border-emerald-500/30 text-sm text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-emerald-500/60 transition duration-300"
+                              placeholder={lang === 'tr' ? 'Örn: 987654321' : 'e.g., 987654321'}
+                              className="w-full bg-purple-950/40 border border-purple-500/25 text-xs text-white px-3 py-2 rounded-lg focus:outline-none"
                             />
+                            <p className="text-[9px] text-gray-500">
+                              {lang === 'tr' 
+                                ? 'Oluşturduğunuz ve satışa sunduğunuz Gamepass ID değerini buraya girin.' 
+                                : 'Enter your customized and for-sale gamepass ID here.'}
+                            </p>
                           </div>
-                          <p className="text-[10px] text-gray-500">
-                            {lang === 'tr' 
-                              ? 'Hesabınızda tamamen ücretsiz bir Gamepass oluşturup buraya ekleyin. Roblox %30 kesinti yapar.' 
-                              : 'Create a 100% free Gamepass in your Roblox experience and paste its ID. Roblox takes a 30% tax.'}
-                          </p>
-                        </motion.div>
-                      )}
+                        ) : (
+                          <div className="space-y-3">
+                            {/* Game Select */}
+                            <div className="space-y-1">
+                              <span className="text-[11px] text-purple-300 font-bold block">{lang === 'tr' ? 'Aktif Oyununuz' : 'Your Experience'}</span>
+                              <select
+                                value={selectedGameId}
+                                onChange={(e) => {
+                                  const gameId = e.target.value;
+                                  setSelectedGameId(gameId);
+                                  // Update gamepass select accordingly
+                                  const matchingPasses = robloxGamepasses.filter(p => p.universeId === gameId);
+                                  if (matchingPasses.length > 0) {
+                                    setGamepassId(matchingPasses[0].id);
+                                  } else {
+                                    setGamepassId('');
+                                  }
+                                }}
+                                className="w-full bg-[#161132] border border-purple-500/20 text-xs text-white p-2.5 rounded-lg focus:outline-none focus:border-purple-500/60"
+                              >
+                                {robloxGames.length === 0 ? (
+                                  <option value="">{lang === 'tr' ? 'Önce kullanıcı adı girin' : 'Enter username first'}</option>
+                                ) : (
+                                  robloxGames.map(g => (
+                                    <option key={g.id} value={g.id}>{g.name}</option>
+                                  ))
+                                )}
+                              </select>
+                            </div>
 
-                      {/* Friend Payout Explanation (Only visible if Friend method is selected) */}
-                      {payoutMethod === 'friend' && (
-                        <motion.div 
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          className="bg-purple-950/40 p-3.5 rounded-xl border border-purple-500/20 space-y-1.5"
-                        >
-                          <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
-                            <span>⚡</span>
-                            <span>{lang === 'tr' ? 'DOĞRUDAN ARKADAŞ TRANSFERİ (YENİ - %0 KESİNTİ)' : 'DIRECT FRIEND TRANSFER (NEW - 0% TAX)'}</span>
-                          </span>
-                          <p className="text-[11px] text-slate-300 leading-relaxed">
-                            {lang === 'tr' 
-                              ? 'Ödeme botumuz Roblox üzerinden size anında bir arkadaşlık isteği gönderecektir. İstek kabul edildikten sonra, Robux bakiyeniz kesintisiz olarak hesabınıza doğrudan transfer edilir!' 
-                              : 'Our payout bot will instantly send you a friend request on Roblox. After accepting, your Robux will be transferred to your account instantly with 0% tax!'}
-                          </p>
-                        </motion.div>
-                      )}
+                            {/* Gamepass Select */}
+                            <div className="space-y-1">
+                              <span className="text-[11px] text-purple-300 font-bold block">{lang === 'tr' ? 'Çekilecek Gamepass' : 'Gamepass to Sell'}</span>
+                              <select
+                                value={gamepassId}
+                                onChange={(e) => setGamepassId(e.target.value)}
+                                className="w-full bg-[#161132] border border-purple-500/20 text-xs text-white p-2.5 rounded-lg focus:outline-none focus:border-purple-500/60"
+                              >
+                                {robloxGamepasses.filter(p => p.universeId === selectedGameId).length === 0 ? (
+                                  <option value="">{lang === 'tr' ? 'Bu oyunda aktif gamepass bulunamadı!' : 'No gamepasses found for this experience!'}</option>
+                                ) : (
+                                  robloxGamepasses.filter(p => p.universeId === selectedGameId).map(p => {
+                                    const expectedRobux = isNaN(parseInt(withdrawAmount)) ? 0 : Math.floor(parseInt(withdrawAmount) / 100);
+                                    const requiredPrice = Math.ceil(expectedRobux / 0.7);
+                                    return (
+                                      <option key={p.id} value={p.id}>
+                                        {p.name} ({p.price > 0 ? `${p.price} Robux` : (lang === 'tr' ? 'Ücretsiz veya Ayarsız' : 'No Price set')})
+                                      </option>
+                                    );
+                                  })
+                                )}
+                              </select>
+                              <p className="text-[10px] text-gray-500 leading-normal mt-1">
+                                {lang === 'tr' 
+                                  ? 'Listede gamepass görünmüyorsa lütfen Roblox sayfanızdan oluşturun veya "Manuel Gamepass ID Gir" seçeneğini kullanın.' 
+                                  : 'If no gamepasses are visible, please create one in Roblox Creator Dashboard or choose Manual Entry.'}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
 
                       {/* Roblox Avatar Preview Card */}
                       {(robloxAvatar || fetchingAvatar) && (
@@ -775,47 +972,6 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                           </div>
                         </motion.div>
                       )}
-
-                      {/* Coin Amount */}
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between items-center">
-                          <label className="text-xs font-bold text-purple-300 tracking-wider uppercase block">{t.coinAmountLabel}</label>
-                          <button
-                            id="btn-withdraw-all"
-                            type="button"
-                            onClick={() => setWithdrawAmount(Math.max(100, Math.floor(balance / 100) * 100).toString())}
-                            className="text-xs text-emerald-400 hover:text-emerald-300 font-bold"
-                          >
-                            {t.withdrawAll}
-                          </button>
-                        </div>
-                        <div className="relative">
-                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-purple-400">
-                            <Coins className="w-5 h-5" />
-                          </div>
-                          <input
-                            id="input-withdraw-amount"
-                            type="number"
-                            min="100"
-                            step="100"
-                            value={withdrawAmount}
-                            onChange={(e) => setWithdrawAmount(e.target.value)}
-                            placeholder={t.coinAmountPlaceholder}
-                            className="w-full bg-purple-950/40 border border-purple-500/20 text-sm text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-purple-500/60 transition duration-300"
-                          />
-                        </div>
-                        <p className="text-[10px] text-gray-500">
-                          {t.coinRateInfo}
-                        </p>
-                      </div>
-
-                      {/* Expected Payout rate badge */}
-                      <div className="bg-purple-950/40 p-3.5 rounded-xl border border-purple-500/10 flex justify-between items-center text-xs">
-                        <span className="text-gray-400">{t.willReceive}</span>
-                        <span className="text-emerald-400 font-black text-sm">
-                          {isNaN(parseInt(withdrawAmount)) ? 0 : Math.floor(parseInt(withdrawAmount) / 100)} Robux
-                        </span>
-                      </div>
 
                       {/* Submit Withdraw Button */}
                       <button
@@ -902,18 +1058,19 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
           </h4>
           
           <div className="space-y-3 divide-y divide-purple-500/10 text-xs">
-            <div className="pt-2">
-              <span className="text-emerald-400 font-bold">@Kemal_34</span> 150 Robux.
-              <p className="text-[10px] text-gray-500 mt-0.5">Az önce • Onaylandı</p>
-            </div>
-            <div className="pt-2">
-              <span className="text-emerald-400 font-bold">@RobloxPrensi</span> 500 Robux.
-              <p className="text-[10px] text-gray-500 mt-0.5">3 dakika önce • Onaylandı</p>
-            </div>
-            <div className="pt-2">
-              <span className="text-emerald-400 font-bold">@GamerGirl_</span> 50 Robux.
-              <p className="text-[10px] text-gray-500 mt-0.5">12 dakika önce • Onaylandı</p>
-            </div>
+            {livePayouts.map((payout, idx) => (
+              <div key={idx} className="pt-2">
+                <span className="text-emerald-400 font-bold">@{payout.username}</span> {payout.robuxAmount} Robux.
+                <p className="text-[10px] text-gray-500 mt-0.5">
+                  {formatTime(payout.createdAt)} • {lang === 'tr' ? 'Onaylandı' : 'Approved'}
+                </p>
+              </div>
+            ))}
+            {livePayouts.length === 0 && (
+              <div className="text-gray-500 py-2">
+                {lang === 'tr' ? 'Henüz ödeme yok.' : 'No payouts yet.'}
+              </div>
+            )}
           </div>
         </div>
 
