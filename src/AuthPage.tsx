@@ -67,8 +67,8 @@ export default function AuthPage({ onSuccess }: AuthPageProps) {
 
       if (!password) {
         newErrors.password = 'Şifre gereklidir.';
-      } else if (password.length < 6) {
-        newErrors.password = 'Şifre en az 6 karakter olmalıdır.';
+      } else if (password.length < 8) {
+        newErrors.password = 'Şifre en az 8 karakter olmalıdır.';
       }
 
       if (password !== confirmPassword) {
@@ -116,7 +116,7 @@ export default function AuthPage({ onSuccess }: AuthPageProps) {
         localStorage.setItem('active_user', JSON.stringify(data.user));
         localStorage.setItem('auth_token', data.token);
         
-        showToast('Kayıt başarılı! 150 Hoş geldin Coini hesabınıza tanımlandı.', 'success');
+        showToast('Kayıt başarılı! 100 Hoş geldin Coini hesabınıza tanımlandı.', 'success');
         setTimeout(() => {
           onSuccess(data.user);
         }, 1000);
@@ -187,7 +187,7 @@ export default function AuthPage({ onSuccess }: AuthPageProps) {
               notification.type === 'success'
                 ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200'
                 : notification.type === 'error'
-                ? 'bg-red-990/90 border-red-500/40 text-red-200'
+                ? 'bg-red-950/90 border-red-500/40 text-red-200'
                 : 'bg-indigo-950/90 border-indigo-500/40 text-indigo-200'
             }`}
           >
@@ -328,6 +328,9 @@ export default function AuthPage({ onSuccess }: AuthPageProps) {
                   <input
                     id="input-username"
                     type="text"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     placeholder={mode === 'register' ? 'Roblox kullanıcı adınız' : 'Kullanıcı adınız'}
@@ -368,6 +371,10 @@ export default function AuthPage({ onSuccess }: AuthPageProps) {
                     <input
                       id="input-email"
                       type="email"
+                      autoComplete="email"
+                      inputMode="email"
+                      autoCapitalize="none"
+                      spellCheck={false}
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="Ornek@gmail.com"
@@ -414,6 +421,7 @@ export default function AuthPage({ onSuccess }: AuthPageProps) {
                   <input
                     id="input-password"
                     type={showPassword ? 'text' : 'password'}
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
@@ -457,6 +465,7 @@ export default function AuthPage({ onSuccess }: AuthPageProps) {
                     <input
                       id="input-confirm-password"
                       type={showPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       placeholder="••••••••"

@@ -39,8 +39,7 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
   const [balance, setBalance] = useState(user.balance);
   const [withdrawUsername, setWithdrawUsername] = useState(user.username);
   const [withdrawAmount, setWithdrawAmount] = useState('1000'); // 10 Robux is the minimum
-  const [withdrawStatus, setWithdrawStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' });
-  const [payoutMethod, setPayoutMethod] = useState<'gamepass'>('gamepass');
+  const [withdrawStatus, setWithdrawStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error' | 'info'; message: string }>({ type: 'idle', message: '' });
   const [gamepassId, setGamepassId] = useState('');
   
   // Roblox games & gamepasses states
@@ -139,6 +138,58 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
     return () => clearInterval(interval);
   }, []);
 
+  // ==========================================
+  // GÖREV TAMAMLAMA SONRASI OTOMATİK BAKİYE YENİLEME
+  // ==========================================
+  // Kullanıcı ayeT-Studios görev sayfasını yeni sekmede açıp bir görevi
+  // tamamladıktan sonra BloxGain sekmesine geri döndüğünde, postback
+  // arka planda işlenmiş olabilir. Kullanıcının "bakiyem güncellenmedi"
+  // diye sayfayı manuel yenilemesini önlemek için, sekme tekrar görünür
+  // hale geldiğinde (veya pencere odağı geri geldiğinde) bakiye sunucudan
+  // otomatik olarak tazelenir.
+  useEffect(() => {
+    const refreshBalance = async () => {
+      const token = localStorage.getItem('auth_token');
+      if (!token) return;
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setBalance(data.balance);
+          const activeUser = localStorage.getItem('active_user');
+          if (activeUser) {
+            const updatedUser = { ...JSON.parse(activeUser), balance: data.balance };
+            localStorage.setItem('active_user', JSON.stringify(updatedUser));
+          }
+        }
+      } catch (err) {
+        console.error('Bakiye yenilenirken hata oluştu:', err);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshBalance();
+      }
+    };
+
+    window.addEventListener('focus', refreshBalance);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Görev merkezinden dönüşü yakalamak için ayrıca periyodik (30sn) bir
+    // yenileme de yapılır; bu, bazı mobil tarayıcılarda visibilitychange
+    // olayının güvenilir tetiklenmemesine karşı bir yedektir.
+    const pollInterval = setInterval(refreshBalance, 30000);
+
+    return () => {
+      window.removeEventListener('focus', refreshBalance);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearInterval(pollInterval);
+    };
+  }, []);
+
   useEffect(() => {
     if (!withdrawUsername.trim()) {
       setRobloxAvatar(null);
@@ -166,21 +217,36 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
     return () => clearTimeout(delayDebounceFn);
   }, [withdrawUsername]);
 
-  // Simulated spin state
+  // Çark animasyon state'i (görsel dönüş efekti içindir; kazanılan ödül
+  // ve gün limiti KESİNLİKLE sunucudan gelir, burada hesaplanmaz)
   const [spinning, setSpinning] = useState(false);
   const [spinResult, setSpinResult] = useState<number | null>(null);
   const [wheelToast, setWheelToast] = useState<string | null>(null);
   const [hasSpunToday, setHasSpunToday] = useState(false);
 
-  // Localized offers list
-  const offersList = [
-    { id: 'off_1', name: 'Rise of Kingdoms', payout: 3500, category: t.game, difficulty: t.difficultyHard, icon: '🏰' },
-    { id: 'off_2', name: 'Solitaire Grand Harvest', payout: 1200, category: t.game, difficulty: t.difficultyMedium, icon: '🃏' },
-    { id: 'off_3', name: 'Yandex Hızlı Anket', payout: 150, category: t.survey, difficulty: t.difficultyEasy, icon: '📝' },
-    { id: 'off_4', name: 'TikTok Takip Et ve Beğen', payout: 80, category: t.social, difficulty: t.difficultyEasy, icon: '📱' },
-  ];
+  // ==========================================
+  // AYET-STUDIOS OFFERWALL ENTEGRASYONU
+  // ==========================================
+  // ayeT-Studios görevleri artık burada UYDURULMUYOR. Kullanıcı "Görevlere
+  // Git" butonuna bastığında gerçek ayeT-Studios offerwall'u (kendi Offerwall
+  // ID'niz ile) yeni sekmede açılır. Kullanıcı orada bir görevi tamamladığında
+  // ayeT-Studios'un sunucuları /api/v1/callback/ayet adresine postback
+  // gönderir ve coin bakiyeye SUNUCU TARAFINDA işlenir. Bu bileşen coin
+  // bakiyesini asla kendisi artırmaz.
+  //
+  // "VITE_AYET_OFFERWALL_ID" .env dosyanızdaki (build-time) değişkendir.
+  // ayeT Studios yayıncı panelinizde "Offerwall ID" veya "Placement ID"
+  // olarak görünür.
+  const AYET_OFFERWALL_ID = import.meta.env.VITE_AYET_OFFERWALL_ID as string | undefined;
+  const ayetConfigured = Boolean(AYET_OFFERWALL_ID);
+  const ayetOfferwallUrl = ayetConfigured
+    ? `https://culture.ayetstudios.com/${AYET_OFFERWALL_ID}?uid=${encodeURIComponent(user.username)}`
+    : '';
 
-  // Simulated local wheel prize pool
+  // Çarkın görsel dilimlerini çizmek için kullanılan ödül listesi.
+  // Sunucudaki (server.ts) prizes dizisiyle SIRA OLARAK BİREBİR AYNI
+  // olmalıdır — kazanan index sunucudan gelir, ödül değeri burada
+  // sadece görsel olarak eşlenir.
   const prizes = [5, 20, 50, 10, 100, 15, 30, 200];
 
   const handleSpin = async () => {
@@ -193,10 +259,13 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
     setWheelToast(null);
 
     try {
+      const token = localStorage.getItem('auth_token');
       const response = await fetch('/api/wheel/spin', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: user.username })
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       const data = await response.json();
@@ -256,15 +325,22 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
     setWithdrawStatus({ type: 'loading', message: t.searchingUser });
 
     try {
+      const token = localStorage.getItem('auth_token');
       const response = await fetch('/api/payout/request', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          username: withdrawUsername, 
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        // NOT: "username" artık gönderilmiyor. Kim çekim yapıyorsa o,
+        // sunucu tarafında JWT token'dan doğrulanıyor — bu sayede bir
+        // kullanıcı başkasının adına çekim talebi oluşturamaz.
+        // "withdrawUsername" alanı yalnızca Roblox oyunu/gamepass arama
+        // amacıyla kullanılır.
+        body: JSON.stringify({
           amount: amountNum,
-          payoutMethod: 'gamepass',
-          gamepassId: gamepassId.trim()
-        })
+          gamepassId: gamepassId.trim(),
+        }),
       });
 
       const data = await response.json();
@@ -274,11 +350,25 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
         return;
       }
 
+      if (data.pending) {
+        // Bakiye düşüldü ama site sahibi henüz Roblox ödeme botunu
+        // (ROBLOX_COOKIE) yapılandırmadı — dürüst şekilde bildiriyoruz.
+        const newBal = balance - amountNum;
+        setBalance(newBal);
+        const activeUser = localStorage.getItem('active_user');
+        if (activeUser) {
+          const updatedUser = { ...JSON.parse(activeUser), balance: newBal };
+          localStorage.setItem('active_user', JSON.stringify(updatedUser));
+        }
+        setWithdrawStatus({ type: 'info', message: data.message });
+        return;
+      }
+
       const newBal = balance - amountNum;
       setBalance(newBal);
-      setWithdrawStatus({ 
-        type: 'success', 
-        message: t.withdrawSuccessMsg 
+      setWithdrawStatus({
+        type: 'success',
+        message: t.withdrawSuccessMsg,
       });
 
       // Sync active user balance in localstorage
@@ -290,7 +380,6 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
 
       // Fetch latest live payouts to immediately reflect the new payout request in the feed
       fetchLivePayouts();
-
     } catch (err) {
       setWithdrawStatus({ type: 'error', message: t.connectionError });
     }
@@ -545,66 +634,66 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                   </motion.div>
                 )}
 
-                {/* Offerwalls Grid */}
+                {/* ayeT-Studios Offerwall Panel */}
                 <div className="space-y-4">
                   <div className="flex justify-between items-center">
                     <h3 className="font-bold text-sm sm:text-base text-white flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-emerald-400" />
                       {t.featuredTasks}
                     </h3>
-                    <span className="text-xs text-gray-400">4 {t.totalTasks}</span>
                   </div>
 
-                  {/* Clean solid boxes for tasks - avoids WebView distortion entirely */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {offersList.map((off) => (
-                      <div 
-                        key={off.id}
-                        className="bg-[#120d22] border border-purple-500/10 hover:border-purple-500/30 p-5 rounded-2xl flex justify-between items-center transition duration-300 group"
-                      >
-                        <div className="flex items-center gap-4">
-                          <span className="text-3xl bg-purple-950/60 p-3 rounded-xl border border-purple-500/10 group-hover:scale-105 transition duration-300">
-                            {off.icon}
-                          </span>
-                          <div>
-                            <span className="text-[10px] uppercase font-bold text-purple-400 tracking-wider">{off.category} • {off.difficulty}</span>
-                            <h4 className="font-bold text-white text-base mt-0.5 group-hover:text-purple-300 transition duration-300">{off.name}</h4>
-                            <p className="text-xs text-gray-500 mt-0.5">Coins: +{off.payout}</p>
-                          </div>
+                  {ayetConfigured ? (
+                    <div className="bg-[#120d22] border border-purple-500/10 rounded-2xl overflow-hidden">
+                      <div className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div className="text-center sm:text-left">
+                          <h4 className="font-bold text-white text-base">
+                            {lang === 'tr' ? 'Görev Merkezi' : 'Task Center'}
+                          </h4>
+                          <p className="text-xs text-gray-500 mt-1 max-w-md">
+                            {lang === 'tr'
+                              ? 'Uygulama indir, anket doldur veya oyun oyna. Görevi tamamladığında Coin bakiyene otomatik olarak yansır (birkaç dakika sürebilir).'
+                              : 'Install an app, complete a survey, or play a game. Your Coin balance updates automatically once the task is verified (may take a few minutes).'}
+                          </p>
                         </div>
-
-                        <div className="text-right flex flex-col items-end gap-2">
-                          <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-black px-3 py-1 rounded-xl text-sm flex items-center gap-1.5">
-                            <Coins className="w-4 h-4 text-emerald-400" />
-                            +{off.payout}
-                          </span>
-                          <button 
-                            id={`btn-offer-${off.id}`}
-                            onClick={() => {
-                              setTaskToast(lang === 'tr' 
-                                ? `'${off.name}' görevi başarıyla başlatıldı! Görev tamamlandığında ödülünüz otomatik olarak bakiye kısmına eklenecektir.` 
-                                : `'${off.name}' task successfully started! Your reward will be automatically added to your balance upon completion.`
-                              );
-                              setBalance(prev => {
-                                const newBal = prev + off.payout;
-                                const activeUser = localStorage.getItem('active_user');
-                                if (activeUser) {
-                                  const updatedUser = { ...JSON.parse(activeUser), balance: newBal };
-                                  localStorage.setItem('active_user', JSON.stringify(updatedUser));
-                                }
-                                return newBal;
-                              });
-                              setTimeout(() => setTaskToast(null), 5000);
-                            }}
-                            className="text-xs text-purple-400 hover:text-emerald-300 font-bold flex items-center gap-1 group/btn"
-                          >
-                            <span>{t.doingTask}</span>
-                            <ArrowRight className="w-3.5 h-3.5 transition group-hover/btn:translate-x-1" />
-                          </button>
-                        </div>
+                        <a
+                          id="btn-open-offerwall"
+                          href={ayetOfferwallUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => {
+                            setTaskToast(
+                              lang === 'tr'
+                                ? 'Görev sayfası yeni sekmede açıldı. Görevi tamamladığında ödülün otomatik olarak hesabına yansıyacak.'
+                                : 'Task page opened in a new tab. Your reward will be credited automatically once completed.'
+                            );
+                            setTimeout(() => setTaskToast(null), 6000);
+                          }}
+                          className="flex-shrink-0 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-purple-950 font-black text-sm py-3 px-6 rounded-xl border border-emerald-400 active:scale-95 transition-all duration-300 flex items-center gap-2"
+                        >
+                          <span>{lang === 'tr' ? 'Görevlere Git' : 'Open Task Center'}</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </a>
                       </div>
-                    ))}
-                  </div>
+                      {/* ayeT-Studios offerwall'u sayfa içinde (iframe) göstermek isterseniz
+                          aşağıdaki satırı kullanabilirsiniz. Bazı offerwall sağlayıcıları X-Frame-Options
+                          nedeniyle iframe içinde açılmayı engeller; sorun yaşarsanız yukarıdaki
+                          "yeni sekmede aç" yöntemini kullanın. */}
+                      {/* <iframe src={ayetOfferwallUrl} className="w-full h-[600px] border-0" title="ayeT-Studios Offerwall" /> */}
+                    </div>
+                  ) : (
+                    <div className="bg-[#120d22] border border-yellow-500/20 rounded-2xl p-6 text-center space-y-2">
+                      <ShieldAlert className="w-8 h-8 text-yellow-400 mx-auto" />
+                      <h4 className="font-bold text-white text-sm">
+                        {lang === 'tr' ? 'Görev Merkezi Henüz Aktif Değil' : 'Task Center Not Yet Active'}
+                      </h4>
+                      <p className="text-xs text-gray-400 max-w-md mx-auto">
+                        {lang === 'tr'
+                          ? 'Site yöneticisi ayeT-Studios Offerwall ID değerini henüz yapılandırmadı. .env dosyasına VITE_AYET_OFFERWALL_ID eklenince bu bölüm otomatik olarak aktif olacaktır.'
+                          : 'The site owner has not configured an ayeT-Studios Offerwall ID yet. This section will activate automatically once VITE_AYET_OFFERWALL_ID is added to the .env file.'}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -765,6 +854,9 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                           <input
                             id="input-withdraw-username"
                             type="text"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck={false}
                             value={withdrawUsername}
                             onChange={(e) => setWithdrawUsername(e.target.value)}
                             placeholder={t.robloxUserPlaceholder}
@@ -793,6 +885,7 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                           <input
                             id="input-withdraw-amount"
                             type="number"
+                            inputMode="numeric"
                             min="1000"
                             step="100"
                             value={withdrawAmount}
@@ -868,6 +961,9 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                             <label className="text-[11px] text-gray-400 font-bold block">{lang === 'tr' ? 'Gamepass ID veya Linki' : 'Gamepass ID or Link'}</label>
                             <input
                               type="text"
+                              autoCapitalize="none"
+                              autoCorrect="off"
+                              spellCheck={false}
                               value={gamepassId}
                               onChange={(e) => setGamepassId(e.target.value)}
                               placeholder={lang === 'tr' ? 'Örn: 987654321' : 'e.g., 987654321'}
@@ -1002,11 +1098,14 @@ export default function DashboardPreview({ user, onLogout }: DashboardPreviewPro
                             ? 'bg-emerald-950/50 border-emerald-500/30 text-emerald-200'
                             : withdrawStatus.type === 'error'
                             ? 'bg-red-950/50 border-red-500/30 text-red-200'
+                            : withdrawStatus.type === 'info'
+                            ? 'bg-yellow-950/40 border-yellow-500/30 text-yellow-200'
                             : 'bg-purple-950/40 border-purple-500/20 text-purple-200'
                         }`}
                       >
                         {withdrawStatus.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400 inline mr-2 align-middle" />}
                         {withdrawStatus.type === 'error' && <ShieldAlert className="w-4 h-4 text-red-400 inline mr-2 align-middle" />}
+                        {withdrawStatus.type === 'info' && <ShieldAlert className="w-4 h-4 text-yellow-400 inline mr-2 align-middle" />}
                         {withdrawStatus.type === 'loading' && <RotateCw className="w-4 h-4 text-purple-400 inline mr-2 align-middle animate-spin" />}
                         <span className="align-middle">{withdrawStatus.message}</span>
                       </motion.div>
