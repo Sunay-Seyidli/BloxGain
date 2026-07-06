@@ -1,0 +1,18 @@
+{
+  "short_name": "BloxGain",
+  "name": "BloxGain - Complete Offers, Get Robux!",
+  "description": "Earn Coins by completing fun gaming offers and withdraw them directly to Roblox instantly!",
+  "icons": [
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0a0712",
+  "theme_color": "#8b5cf6",
+  "display": "standalone",
+  "orientation": "portrait"
+}
